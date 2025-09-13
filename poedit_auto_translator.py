@@ -121,7 +121,7 @@ class PoeditAutoTranslator:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Poedit自动翻译")
-        self.root.geometry("600x500")
+        self.root.geometry("600x700")
         
         # 配置文件路径
         self.config_dir = self.get_config_directory()
@@ -132,12 +132,26 @@ class PoeditAutoTranslator:
             'poedit_source': None,      # Poedit原文框
             'poedit_target': None,      # Poedit译文框
             'service_source': None,     # 翻译服务原文框
-            'service_copy_button': None # 翻译服务复制按钮
+            'service_copy_button': None, # 翻译服务复制按钮
+            'service_result_box': None,  # 翻译服务译文框（用于全选复制方案）
+            'scroll_gesture_position': None  # 执行鼠标手势的位置
         }
         
         # 设置选项
         self.skip_translated = tk.BooleanVar(value=True)  # 跳过已翻译
         self.translation_wait_time = tk.IntVar(value=3000)  # 翻译结果等待时间(毫秒)
+        
+        # 新增的翻译检测配置项
+        self.check_translation_consistency = tk.BooleanVar(value=True)  # 是否检测翻译原文与复制的译文是否一致
+        self.check_interval = tk.IntVar(value=500)  # 检测时间间隔(毫秒)
+        self.check_timeout_count = tk.IntVar(value=20)  # 检测超时次数
+        
+        # 新增：翻译服务译文复制方式（0=点击复制按钮，1=全选复制）
+        self.copy_method = tk.IntVar(value=0)
+        
+        # 新增：鼠标手势滚动到底部相关设置
+        self.use_scroll_gesture = tk.BooleanVar(value=False)  # 复制翻译结果前使用鼠标手势滚动到底部
+        self.scroll_gesture_wait_time = tk.IntVar(value=500)  # 执行滚动手势后等待时间(毫秒)
         
         # 快捷键设置
         self.hotkey_combination = tk.StringVar(value="F9")  # 默认快捷键
@@ -148,6 +162,7 @@ class PoeditAutoTranslator:
         self.translation_thread = None
         self.same_source_count = 0  # 连续相同原文计数器
         self.last_source_text = ""  # 上次的原文
+        self.last_translated_text = ""  # 上次的译文
         
         # 剪贴板监控器
         self.clipboard_monitor = ClipboardMonitor()
@@ -176,7 +191,9 @@ class PoeditAutoTranslator:
             ("Poedit原文框:", 'poedit_source'),
             ("Poedit译文框:", 'poedit_target'),
             ("翻译服务原文框:", 'service_source'),
-            ("翻译服务复制按钮:", 'service_copy_button')
+            ("翻译服务复制按钮:", 'service_copy_button'),
+            ("翻译服务译文框:", 'service_result_box'),
+            ("执行鼠标手势的位置:", 'scroll_gesture_position')
         ]
         
         self.coord_vars = {}
@@ -190,22 +207,53 @@ class PoeditAutoTranslator:
             ttk.Button(settings_frame, text="选择", 
                       command=lambda k=key: self.select_coordinate(k)).grid(row=i, column=2, pady=2)
         
-        # 快捷键绑定设置（放在翻译服务复制按钮下方）
-        ttk.Label(settings_frame, text="停止快捷键:").grid(row=4, column=0, sticky=tk.W, pady=2)
+        # 计算后续控件的起始行
+        base_row = len(coord_labels)
+        
+        # 快捷键绑定设置（放在翻译服务复制按钮设置项下方）
+        ttk.Label(settings_frame, text="停止快捷键:").grid(row=base_row, column=0, sticky=tk.W, pady=2)
         self.hotkey_display = ttk.Label(settings_frame, text=self.hotkey_combination.get(), 
                                        relief="sunken", width=20)
-        self.hotkey_display.grid(row=4, column=1, padx=(10, 5), pady=2)
+        self.hotkey_display.grid(row=base_row, column=1, padx=(10, 5), pady=2)
         self.bind_button = ttk.Button(settings_frame, text="绑定按键", 
                                      command=self.start_key_binding)
-        self.bind_button.grid(row=4, column=2, pady=2)
+        self.bind_button.grid(row=base_row, column=2, pady=2)
+        
+        # 新增：翻译服务译文复制方式单选（左=点击复制按钮，右=全选复制）
+        ttk.Label(settings_frame, text="翻译服务译文复制方式:").grid(row=base_row+1, column=0, sticky=tk.W, pady=2)
+        copy_method_frame = ttk.Frame(settings_frame)
+        copy_method_frame.grid(row=base_row+1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0), pady=2)
+        ttk.Radiobutton(copy_method_frame, text="复制按钮", variable=self.copy_method, value=0).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(copy_method_frame, text="全选复制", variable=self.copy_method, value=1).pack(side=tk.LEFT)
+        
+        # 新增：复制翻译结果前使用鼠标手势滚动到底部
+        ttk.Checkbutton(settings_frame, text="复制翻译结果前使用鼠标手势滚动到底部", 
+                       variable=self.use_scroll_gesture).grid(row=base_row+2, column=0, columnspan=2, sticky=tk.W, pady=2)
+        
+        # 新增：执行滚动到底部鼠标手势后等待时间
+        ttk.Label(settings_frame, text="执行滚动到底部鼠标手势后等待时间(毫秒):").grid(row=base_row+3, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=100, to=3000, textvariable=self.scroll_gesture_wait_time, 
+                   width=10).grid(row=base_row+3, column=1, padx=(10, 0), pady=2)
         
         # 其他选项设置
         ttk.Checkbutton(settings_frame, text="跳过已翻译的字段", 
-                       variable=self.skip_translated).grid(row=5, column=0, sticky=tk.W, pady=2)
+                       variable=self.skip_translated).grid(row=base_row+4, column=0, sticky=tk.W, pady=2)
         
-        ttk.Label(settings_frame, text="翻译结果等待时间(毫秒):").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Label(settings_frame, text="翻译结果等待时间(毫秒):").grid(row=base_row+5, column=0, sticky=tk.W, pady=2)
         ttk.Spinbox(settings_frame, from_=100, to=5000, textvariable=self.translation_wait_time, 
-                   width=10).grid(row=6, column=1, padx=(10, 0), pady=2)
+                   width=10).grid(row=base_row+5, column=1, padx=(10, 0), pady=2)
+        
+        # 新增的翻译检测设置项
+        ttk.Checkbutton(settings_frame, text="检测翻译原文与复制的译文是否一致", 
+                       variable=self.check_translation_consistency).grid(row=base_row+6, column=0, columnspan=2, sticky=tk.W, pady=2)
+        
+        ttk.Label(settings_frame, text="检测翻译原文与复制的译文是否一致时间间隔(毫秒):").grid(row=base_row+7, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=100, to=10000, textvariable=self.check_interval, 
+                   width=10).grid(row=base_row+7, column=1, padx=(10, 0), pady=2)
+        
+        ttk.Label(settings_frame, text="检测翻译原文与复制的译文是否一致的超时次数:").grid(row=base_row+8, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=1, to=100, textvariable=self.check_timeout_count, 
+                   width=10).grid(row=base_row+8, column=1, padx=(10, 0), pady=2)
         
         
         # 控制按钮区域
@@ -224,7 +272,7 @@ class PoeditAutoTranslator:
                   command=self.save_config).pack(side=tk.LEFT, padx=5)
         
         # 状态显示区域
-        status_frame = ttk.LabelFrame(main_frame, text="运行状态", padding="10")
+        status_frame = ttk.LabelFrame(main_frame, text="运行日志", padding="10")
         status_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         self.status_text = tk.Text(status_frame, height=15, width=60, state='disabled')
@@ -410,9 +458,19 @@ class PoeditAutoTranslator:
     
     def start_translation(self):
         """开始翻译"""
-        # 检查坐标是否都已设置
-        for coord_type, coord in self.coordinates.items():
-            if coord is None:
+        # 检查坐标是否都已设置（根据复制方案选择对应必需项）
+        required_keys = ['poedit_source', 'poedit_target', 'service_source']
+        if self.copy_method.get() == 1:
+            required_keys.append('service_result_box')
+        else:
+            required_keys.append('service_copy_button')
+        
+        # 如果启用了鼠标手势滚动到底部，也需要检查手势位置坐标
+        if self.use_scroll_gesture.get():
+            required_keys.append('scroll_gesture_position')
+        
+        for coord_type in required_keys:
+            if self.coordinates.get(coord_type) is None:
                 messagebox.showerror("错误", f"请先设置{coord_type}的坐标")
                 return
         
@@ -447,7 +505,9 @@ class PoeditAutoTranslator:
             while self.is_running:
                 # 1. 先获取原文
                 source_text = self.get_poedit_source_text()
-                if not source_text:
+                if not source_text or not self.is_running:
+                    if not self.is_running:
+                        break
                     self.log_status("无法获取原文，可能已完成所有翻译")
                     break
                 
@@ -464,12 +524,20 @@ class PoeditAutoTranslator:
                 # 更新上次原文
                 self.last_source_text = source_text
                 
-                # 2. 检查译文框是否为空
+                # 检查停止状态
+                if not self.is_running:
+                    break
+                
+                # 2. 检查译文框是否为空或只有空格
                 target_text = self.get_poedit_target_text()
-                if self.skip_translated.get() and target_text:
+                if self.skip_translated.get() and target_text and target_text.strip():
                     self.log_status("跳过已翻译字段")
                     self.next_translation_item()
                     continue
+                
+                # 检查停止状态
+                if not self.is_running:
+                    break
                 
                 # 保存当前原文
                 self.clipboard_monitor.save_content_to_temp(source_text, "source")
@@ -480,23 +548,37 @@ class PoeditAutoTranslator:
                 # 3. 将原文粘贴到翻译服务
                 self.paste_to_translation_service(source_text)
                 
+                # 检查停止状态
+                if not self.is_running:
+                    break
+                
                 # 4. 等待翻译结果
                 translated_text = self.wait_for_translation_result(source_text)
-                if not translated_text:
+                if not translated_text or not self.is_running:
+                    if not self.is_running:
+                        break
                     self.log_status("翻译超时或失败，跳到下一项")
                     self.next_translation_item()
                     continue
                 
+                # 检查停止状态
+                if not self.is_running:
+                    break
+                
                 # 5. 将翻译结果粘贴到Poedit
                 self.paste_to_poedit_target(translated_text)
+                self.last_translated_text = translated_text  # 记录本次译文，防止下一条误用
                 
                 self.log_status(f"翻译完成: {translated_text[:50]}...")
                 
                 # 6. 跳到下一项
                 self.next_translation_item()
                 
-                # 短暂延迟
-                time.sleep(0.05)
+                # 短暂延迟，但检查停止状态
+                for _ in range(5):  # 分成5次检查，每次10ms
+                    if not self.is_running:
+                        break
+                    time.sleep(0.01)
                 
         except Exception as e:
             self.log_status(f"翻译过程出错: {str(e)}")
@@ -552,8 +634,81 @@ class PoeditAutoTranslator:
             # 粘贴新内容
             pyautogui.hotkey('ctrl', 'v')
             time.sleep(0.05)
+            
+            # 如果启用了鼠标手势滚动到底部，执行滚动手势
+            if self.use_scroll_gesture.get():
+                self.perform_scroll_to_bottom_gesture()
+                
         except Exception as e:
             self.log_status(f"粘贴到翻译服务失败: {str(e)}")
+    
+    def perform_scroll_to_bottom_gesture(self):
+        """执行鼠标手势滚动到底部"""
+        try:
+            if self.coordinates['scroll_gesture_position'] is None:
+                self.log_status("鼠标手势位置未设置，跳过滚动手势")
+                return
+                
+            x, y = self.coordinates['scroll_gesture_position']
+            self.log_status("执行鼠标手势滚动到底部...")
+            
+            # 移动到指定位置
+            pyautogui.moveTo(x, y)
+            time.sleep(0.05)
+            
+            # 按下右键开始拖拽
+            pyautogui.mouseDown(button='right')
+            time.sleep(0.05)
+            
+            # 先向上滑动50像素
+            pyautogui.move(0, -50, duration=0.15)
+            time.sleep(0.05)
+            
+            # 再向下滑动50像素（相对于当前位置）
+            pyautogui.move(0, 50, duration=0.15)
+            
+            # 释放右键
+            pyautogui.mouseUp(button='right')
+            
+            # 等待用户设置的时间
+            wait_time = self.scroll_gesture_wait_time.get() / 1000.0
+            self.log_status(f"滚动手势完成，等待 {self.scroll_gesture_wait_time.get()}ms...")
+            time.sleep(wait_time)
+            
+        except Exception as e:
+            self.log_status(f"执行鼠标手势失败: {str(e)}")
+    
+    def perform_scroll_to_top_gesture(self):
+        """执行鼠标手势滚动到顶部"""
+        try:
+            if self.coordinates['scroll_gesture_position'] is None:
+                self.log_status("鼠标手势位置未设置，跳过滚动手势")
+                return
+                
+            x, y = self.coordinates['scroll_gesture_position']
+            self.log_status("执行鼠标手势滚动到顶部...")
+            
+            # 移动到指定位置
+            pyautogui.moveTo(x, y)
+            time.sleep(0.05)
+            
+            # 按下右键开始拖拽
+            pyautogui.mouseDown(button='right')
+            time.sleep(0.05)
+            
+            # 先向下滑动50像素
+            pyautogui.move(0, 50, duration=0.15)
+            time.sleep(0.05)
+            
+            # 再向上滑动50像素（相对于当前位置）
+            pyautogui.move(0, -50, duration=0.15)
+            
+            # 释放右键
+            pyautogui.mouseUp(button='right')
+            time.sleep(0.05)
+            
+        except Exception as e:
+            self.log_status(f"执行滚动到顶部手势失败: {str(e)}")
     
     def wait_for_translation_result(self, original_text: str) -> str:
         """等待翻译结果"""
@@ -563,14 +718,91 @@ class PoeditAutoTranslator:
         time.sleep(wait_time)
         
         try:
-            # 点击翻译服务复制按钮
-            x, y = self.coordinates['service_copy_button']
-            pyautogui.click(x, y)
-            time.sleep(0.05)  # 等待复制操作完成
+            # 在开始复制前，先把剪贴板重置为当前原文，确保基线
+            pyperclip.copy(original_text)
+            
+            # 复制译文（根据设置：复制按钮 或 全选复制）
+            if self.copy_method.get() == 1:
+                rx, ry = self.coordinates['service_result_box']
+                pyautogui.click(rx, ry)
+                time.sleep(0.05)
+                pyautogui.hotkey('ctrl', 'a')
+                time.sleep(0.05)
+                pyautogui.hotkey('ctrl', 'c')
+                time.sleep(0.05)
+                pyautogui.click(rx, ry)  # 取消选中
+                time.sleep(0.05)
+            else:
+                x, y = self.coordinates['service_copy_button']
+                pyautogui.click(x, y)
+                time.sleep(0.05)  # 等待复制操作完成
             
             translated_text = self.clipboard_monitor.get_clipboard_content()
             
-            # 返回翻译结果（不检查是否与原文相同）
+            # 如果启用了鼠标手势滚动到底部，复制译文后滚动到顶部
+            if self.use_scroll_gesture.get():
+                if self.coordinates['scroll_gesture_position'] is None:
+                    self.log_status("鼠标手势位置未设置，跳过滚动手势")
+                else:
+                    self.perform_scroll_to_top_gesture()
+            
+            # 如果启用了翻译一致性检测
+            if self.check_translation_consistency.get():
+                check_count = 0
+                max_checks = self.check_timeout_count.get()
+                check_interval = self.check_interval.get() / 1000.0
+                
+                self.log_status(f"开始检测翻译结果是否与原文一致...")
+                
+                while check_count < max_checks and self.is_running:
+                    # 剪贴板仍为原文：说明没有复制到译文
+                    if translated_text == original_text.strip():
+                        self.log_status(f"剪贴板仍为原文，翻译服务处理中... ({check_count}/{max_checks})")
+                    # 非空白且不等于原文：有可能是译文或上一条旧译文
+                    elif translated_text and not translated_text.isspace() and translated_text.strip() != original_text.strip():
+                        # 防止误用上一条旧译文：若与上一条译文一致，则继续等待刷新
+                        if getattr(self, 'last_translated_text', "") and translated_text.strip() == self.last_translated_text.strip():
+                            self.log_status(f"检测到与上一条译文相同，可能是旧内容，继续等待... ({check_count}/{max_checks})")
+                        else:
+                            self.log_status("检测到新译文，翻译完成")
+                            return translated_text
+                    else:
+                        # 空内容或全空格，继续等待
+                        self.log_status(f"剪贴板为空或全空格，继续等待... ({check_count}/{max_checks})")
+                    
+                    # 等待后重试
+                    check_count += 1
+                    time.sleep(check_interval)
+                    
+                    # 重试前重新复制译文
+                    if self.copy_method.get() == 1:
+                        if self.coordinates['service_result_box'] is None:
+                            self.log_status("翻译服务译文框坐标未设置，无法重试复制")
+                            break
+                        rx, ry = self.coordinates['service_result_box']
+                        pyautogui.click(rx, ry)
+                        time.sleep(0.05)
+                        pyautogui.hotkey('ctrl', 'a')
+                        time.sleep(0.05)
+                        pyautogui.hotkey('ctrl', 'c')
+                        time.sleep(0.05)
+                        pyautogui.click(rx, ry)
+                        time.sleep(0.05)
+                    else:
+                        if self.coordinates['service_copy_button'] is None:
+                            self.log_status("翻译服务复制按钮坐标未设置，无法重试复制")
+                            break
+                        x, y = self.coordinates['service_copy_button']
+                        pyautogui.click(x, y)
+                        time.sleep(0.05)
+                    translated_text = self.clipboard_monitor.get_clipboard_content()
+                
+                # 超时后直接返回当前剪贴板内容（若有效）
+                if check_count >= max_checks:
+                    self.log_status(f"检测超时，使用当前剪贴板内容")
+                    return translated_text if translated_text and not translated_text.isspace() else ""
+            
+            # 如果未启用检测或检测通过，直接返回翻译结果
             if translated_text and not translated_text.isspace():
                 return translated_text
             
@@ -616,7 +848,7 @@ class PoeditAutoTranslator:
         if not os.path.exists(self.config_dir):
             try:
                 os.makedirs(self.config_dir)
-                print(f"创建配置目录: {self.config_dir}")
+
             except Exception as e:
                 print(f"创建配置目录失败: {e}")
                 # 如果创建失败，回退到当前目录
@@ -632,7 +864,13 @@ class PoeditAutoTranslator:
             'coordinates': self.coordinates,
             'skip_translated': self.skip_translated.get(),
             'translation_wait_time': self.translation_wait_time.get(),
-            'hotkey_combination': self.hotkey_combination.get()
+            'hotkey_combination': self.hotkey_combination.get(),
+            'check_translation_consistency': self.check_translation_consistency.get(),
+            'check_interval': self.check_interval.get(),
+            'check_timeout_count': self.check_timeout_count.get(),
+            'copy_method': self.copy_method.get(),
+            'use_scroll_gesture': self.use_scroll_gesture.get(),
+            'scroll_gesture_wait_time': self.scroll_gesture_wait_time.get()
         }
         
         try:
@@ -649,9 +887,12 @@ class PoeditAutoTranslator:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 
-                self.coordinates = config['coordinates']
-                self.skip_translated.set(config['skip_translated'])
-                self.translation_wait_time.set(config['translation_wait_time'])
+                if 'coordinates' in config:
+                    self.coordinates = config['coordinates']
+                if 'skip_translated' in config:
+                    self.skip_translated.set(config['skip_translated'])
+                if 'translation_wait_time' in config:
+                    self.translation_wait_time.set(config['translation_wait_time'])
                 
                 # 加载快捷键设置
                 if 'hotkey_combination' in config:
@@ -661,18 +902,39 @@ class PoeditAutoTranslator:
                     # 重新设置快捷键监听
                     self.root.after(100, self.setup_hotkey_listener)
                 
+                # 加载新的翻译检测配置项
+                if 'check_translation_consistency' in config:
+                    self.check_translation_consistency.set(config['check_translation_consistency'])
+                if 'check_interval' in config:
+                    self.check_interval.set(config['check_interval'])
+                if 'check_timeout_count' in config:
+                    self.check_timeout_count.set(config['check_timeout_count'])
+                
+                # 加载复制方案设置
+                if 'copy_method' in config:
+                    self.copy_method.set(config['copy_method'])
+                # 兼容旧配置格式
+                elif 'use_select_all_copy' in config:
+                    self.copy_method.set(1 if config['use_select_all_copy'] else 0)
+                
+                # 加载鼠标手势设置
+                if 'use_scroll_gesture' in config:
+                    self.use_scroll_gesture.set(config['use_scroll_gesture'])
+                if 'scroll_gesture_wait_time' in config:
+                    self.scroll_gesture_wait_time.set(config['scroll_gesture_wait_time'])
+                
                 # 更新UI显示
                 for key, coord in self.coordinates.items():
                     if coord:
                         self.coord_vars[key].set(f"({coord[0]}, {coord[1]})")
                 
-                self.log_status("配置加载成功")
+                # 配置加载完成，不显示日志
             else:
-                self.log_status("请设置坐标")
+                pass # 首次打开软件没有配置文件时，不显示任何日志
                 
         except Exception as e:
             self.log_status(f"加载配置失败: {str(e)}")
-    
+
 
     
     def on_closing(self):
