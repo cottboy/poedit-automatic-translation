@@ -154,8 +154,10 @@ class PoeditAutoTranslator:
         self.scroll_gesture_wait_time = tk.IntVar(value=500)  # 执行滚动手势后等待时间(毫秒)
         
         # 快捷键设置
-        self.hotkey_combination = tk.StringVar(value="F9")  # 默认快捷键
+        self.start_hotkey_combination = tk.StringVar(value="F9")  # 开始快捷键，默认F9
+        self.stop_hotkey_combination = tk.StringVar(value="F10")  # 停止快捷键，默认F10
         self.is_binding_key = False  # 是否正在绑定按键
+        self.binding_key_type = None  # 正在绑定的快捷键类型（'start' 或 'stop'）
         
         # 运行状态
         self.is_running = False
@@ -211,13 +213,25 @@ class PoeditAutoTranslator:
         base_row = len(coord_labels)
         
         # 快捷键绑定设置（放在翻译服务复制按钮设置项下方）
-        ttk.Label(settings_frame, text="停止快捷键:").grid(row=base_row, column=0, sticky=tk.W, pady=2)
-        self.hotkey_display = ttk.Label(settings_frame, text=self.hotkey_combination.get(), 
-                                       relief="sunken", width=20)
-        self.hotkey_display.grid(row=base_row, column=1, padx=(10, 5), pady=2)
-        self.bind_button = ttk.Button(settings_frame, text="绑定按键", 
-                                     command=self.start_key_binding)
-        self.bind_button.grid(row=base_row, column=2, pady=2)
+        ttk.Label(settings_frame, text="快捷键设置:").grid(row=base_row, column=0, sticky=tk.W, pady=2)
+        
+        # 快捷键设置框架
+        hotkey_frame = ttk.Frame(settings_frame)
+        hotkey_frame.grid(row=base_row, column=1, columnspan=2, sticky=tk.W, padx=(10, 0), pady=2)
+        
+        # 开始快捷键（左边）
+        ttk.Label(hotkey_frame, text="开始:").pack(side=tk.LEFT)
+        self.start_hotkey_display = ttk.Label(hotkey_frame, text=self.start_hotkey_combination.get(), 
+                                             relief="sunken", width=11, cursor="hand2")
+        self.start_hotkey_display.pack(side=tk.LEFT, padx=(5, 5))
+        self.start_hotkey_display.bind("<Button-1>", lambda e: self.start_key_binding('start'))
+        
+        # 停止快捷键（右边）
+        ttk.Label(hotkey_frame, text="停止:").pack(side=tk.LEFT)
+        self.stop_hotkey_display = ttk.Label(hotkey_frame, text=self.stop_hotkey_combination.get(), 
+                                            relief="sunken", width=11, cursor="hand2")
+        self.stop_hotkey_display.pack(side=tk.LEFT, padx=(5, 0))
+        self.stop_hotkey_display.bind("<Button-1>", lambda e: self.start_key_binding('stop'))
         
         # 新增：翻译服务译文复制方式单选（左=点击复制按钮，右=全选复制）
         ttk.Label(settings_frame, text="翻译服务译文复制方式:").grid(row=base_row+1, column=0, sticky=tk.W, pady=2)
@@ -327,29 +341,63 @@ class PoeditAutoTranslator:
                     pass
                 self.hotkey_hook = None
 
-            # 解析快捷键组合
-            combo = self.hotkey_combination.get().strip().lower()
-            parts = [p.strip() for p in combo.split('+') if p.strip()]
-            modifiers = {p for p in parts if p in ('ctrl', 'alt', 'shift')}
-            main_key = next((p for p in reversed(parts) if p not in ('ctrl', 'alt', 'shift')), None)
+            # 解析开始快捷键组合
+            start_combo = self.start_hotkey_combination.get().strip().lower()
+            start_parts = [p.strip() for p in start_combo.split('+') if p.strip()]
+            start_modifiers = {p for p in start_parts if p in ('ctrl', 'alt', 'shift')}
+            start_main_key = next((p for p in reversed(start_parts) if p not in ('ctrl', 'alt', 'shift')), None)
+            
+            # 解析停止快捷键组合
+            stop_combo = self.stop_hotkey_combination.get().strip().lower()
+            stop_parts = [p.strip() for p in stop_combo.split('+') if p.strip()]
+            stop_modifiers = {p for p in stop_parts if p in ('ctrl', 'alt', 'shift')}
+            stop_main_key = next((p for p in reversed(stop_parts) if p not in ('ctrl', 'alt', 'shift')), None)
 
             def handler(event):
                 try:
-                    # 绑定按键期间不触发紧急停止
+                    # 绑定按键期间不触发快捷键
                     if getattr(self, 'is_binding_key', False):
                         return
                     # 仅在按下事件时判断
                     if getattr(event, 'event_type', '') != 'down':
                         return
-                    # 检查修饰键状态
-                    for m in modifiers:
-                        if not keyboard.is_pressed(m):
+                    
+                    event_key = getattr(event, 'name', '')
+                    
+                    # 检查开始快捷键
+                    if start_main_key and event_key == start_main_key:
+                        # 检查修饰键状态
+                        modifiers_match = True
+                        for m in start_modifiers:
+                            if not keyboard.is_pressed(m):
+                                modifiers_match = False
+                                break
+                        # 检查是否有多余的修饰键被按下
+                        for m in ('ctrl', 'alt', 'shift'):
+                            if m not in start_modifiers and keyboard.is_pressed(m):
+                                modifiers_match = False
+                                break
+                        if modifiers_match:
+                            self.trigger_start_translation()
                             return
-                    # 检查主键（如果存在）
-                    if main_key and getattr(event, 'name', '') != main_key:
-                        return
-                    # 触发紧急停止
-                    self.emergency_stop()
+                    
+                    # 检查停止快捷键
+                    if stop_main_key and event_key == stop_main_key:
+                        # 检查修饰键状态
+                        modifiers_match = True
+                        for m in stop_modifiers:
+                            if not keyboard.is_pressed(m):
+                                modifiers_match = False
+                                break
+                        # 检查是否有多余的修饰键被按下
+                        for m in ('ctrl', 'alt', 'shift'):
+                            if m not in stop_modifiers and keyboard.is_pressed(m):
+                                modifiers_match = False
+                                break
+                        if modifiers_match:
+                            self.emergency_stop()
+                            return
+                            
                 except Exception:
                     # 忽略钩子中的异常，避免影响主循环
                     pass
@@ -387,13 +435,17 @@ class PoeditAutoTranslator:
                 else:
                     hotkey_str = key_name
                 
-                # 更新快捷键
-                self.hotkey_combination.set(hotkey_str)
-                self.hotkey_display.config(text=hotkey_str)
+                # 根据绑定类型更新对应的快捷键
+                if self.binding_key_type == 'start':
+                    self.start_hotkey_combination.set(hotkey_str)
+                    self.start_hotkey_display.config(text=hotkey_str, cursor="hand2")
+                else:
+                    self.stop_hotkey_combination.set(hotkey_str)
+                    self.stop_hotkey_display.config(text=hotkey_str, cursor="hand2")
                 
                 # 结束绑定
                 self.is_binding_key = False
-                self.bind_button.config(text="绑定按键", state="normal")
+                self.binding_key_type = None
                 
                 # 重新设置快捷键监听
                 import keyboard as _kb
@@ -416,16 +468,31 @@ class PoeditAutoTranslator:
         if self.is_running:
             self.is_running = False
             self.root.after(0, self.stop_translation)
-            self.root.after(0, lambda: self.log_status(f"*** 紧急停止 - 通过{self.hotkey_combination.get()}快捷键触发 ***"))
+            self.root.after(0, lambda: self.log_status(f"*** 紧急停止 - 通过{self.stop_hotkey_combination.get()}快捷键触发 ***"))
     
-    def start_key_binding(self):
-        """开始按键绑定"""
+    def trigger_start_translation(self):
+        """通过快捷键触发开始翻译"""
+        if not self.is_running:
+            self.root.after(0, self.start_translation)
+            self.root.after(0, lambda: self.log_status(f"*** 开始翻译 - 通过{self.start_hotkey_combination.get()}快捷键触发 ***"))
+    
+    def start_key_binding(self, key_type):
+        """开始按键绑定
+        
+        Args:
+            key_type: 'start' 或 'stop'，表示绑定开始快捷键还是停止快捷键
+        """
         if self.is_binding_key:
             return
             
         self.is_binding_key = True
-        self.bind_button.config(text="按下按键...", state="disabled")
-        self.hotkey_display.config(text="等待按键...")
+        self.binding_key_type = key_type
+        
+        # 更新对应的显示
+        if key_type == 'start':
+            self.start_hotkey_display.config(text="等待按键...", cursor="")
+        else:
+            self.stop_hotkey_display.config(text="等待按键...", cursor="")
         
         # 在绑定期间暂停现有快捷键监听，避免误触
         try:
@@ -864,7 +931,8 @@ class PoeditAutoTranslator:
             'coordinates': self.coordinates,
             'skip_translated': self.skip_translated.get(),
             'translation_wait_time': self.translation_wait_time.get(),
-            'hotkey_combination': self.hotkey_combination.get(),
+            'start_hotkey_combination': self.start_hotkey_combination.get(),
+            'stop_hotkey_combination': self.stop_hotkey_combination.get(),
             'check_translation_consistency': self.check_translation_consistency.get(),
             'check_interval': self.check_interval.get(),
             'check_timeout_count': self.check_timeout_count.get(),
@@ -895,12 +963,18 @@ class PoeditAutoTranslator:
                     self.translation_wait_time.set(config['translation_wait_time'])
                 
                 # 加载快捷键设置
-                if 'hotkey_combination' in config:
-                    self.hotkey_combination.set(config['hotkey_combination'])
-                    if hasattr(self, 'hotkey_display'):
-                        self.hotkey_display.config(text=config['hotkey_combination'])
-                    # 重新设置快捷键监听
-                    self.root.after(100, self.setup_hotkey_listener)
+                if 'start_hotkey_combination' in config:
+                    self.start_hotkey_combination.set(config['start_hotkey_combination'])
+                    if hasattr(self, 'start_hotkey_display'):
+                        self.start_hotkey_display.config(text=config['start_hotkey_combination'])
+                        
+                if 'stop_hotkey_combination' in config:
+                    self.stop_hotkey_combination.set(config['stop_hotkey_combination'])
+                    if hasattr(self, 'stop_hotkey_display'):
+                        self.stop_hotkey_display.config(text=config['stop_hotkey_combination'])
+                        
+                # 重新设置快捷键监听
+                self.root.after(100, self.setup_hotkey_listener)
                 
                 # 加载新的翻译检测配置项
                 if 'check_translation_consistency' in config:
