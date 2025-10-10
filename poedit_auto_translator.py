@@ -121,7 +121,7 @@ class PoeditAutoTranslator:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Poedit自动翻译")
-        self.root.geometry("600x700")
+        self.root.geometry("600x800")
         
         # 配置文件路径
         self.config_dir = self.get_config_directory()
@@ -134,6 +134,7 @@ class PoeditAutoTranslator:
             'service_source': None,     # 翻译服务原文框
             'service_copy_button': None, # 翻译服务复制按钮
             'service_result_box': None,  # 翻译服务译文框（用于全选复制方案）
+            'translate_button_position': None,  # 翻译按钮位置
             'scroll_gesture_position': None  # 执行鼠标手势的位置
         }
         
@@ -155,7 +156,10 @@ class PoeditAutoTranslator:
         
         # 新增：换行转换设置
         self.convert_newlines = tk.BooleanVar(value=False)  # 将换行转换为__NL_114514__无意义字符
-        
+
+        # 新增：点击翻译按钮设置
+        self.need_click_translate_button = tk.BooleanVar(value=False)  # 是否需要点击翻译按钮
+
         # 快捷键设置
         self.start_hotkey_combination = tk.StringVar(value="F9")  # 开始快捷键，默认F9
         self.stop_hotkey_combination = tk.StringVar(value="F10")  # 停止快捷键，默认F10
@@ -196,8 +200,9 @@ class PoeditAutoTranslator:
             ("Poedit原文框:", 'poedit_source'),
             ("Poedit译文框:", 'poedit_target'),
             ("翻译服务原文框:", 'service_source'),
-            ("翻译服务复制按钮:", 'service_copy_button'),
             ("翻译服务译文框:", 'service_result_box'),
+            ("翻译服务复制按钮:", 'service_copy_button'),
+            ("翻译按钮:", 'translate_button_position'),
             ("执行鼠标手势的位置:", 'scroll_gesture_position')
         ]
         
@@ -245,39 +250,43 @@ class PoeditAutoTranslator:
         ttk.Radiobutton(copy_method_frame, text="双击复制", variable=self.copy_method, value=2).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Radiobutton(copy_method_frame, text="三击复制", variable=self.copy_method, value=3).pack(side=tk.LEFT)
         copy_method_frame.grid(row=base_row+1, column=0, columnspan=3, sticky=tk.W, pady=2)
-        
+
+        # 新增：需要点击翻译按钮
+        ttk.Checkbutton(settings_frame, text="需要点击翻译按钮",
+                       variable=self.need_click_translate_button).grid(row=base_row+2, column=0, columnspan=2, sticky=tk.W, pady=2)
+
         # 新增：复制翻译结果前使用鼠标手势滚动到底部
-        ttk.Checkbutton(settings_frame, text="复制翻译结果前使用鼠标手势滚动到底部", 
-                       variable=self.use_scroll_gesture).grid(row=base_row+2, column=0, columnspan=2, sticky=tk.W, pady=2)
-        
+        ttk.Checkbutton(settings_frame, text="复制翻译结果前使用鼠标手势滚动到底部",
+                       variable=self.use_scroll_gesture).grid(row=base_row+3, column=0, columnspan=2, sticky=tk.W, pady=2)
+
         # 新增：执行滚动到底部鼠标手势后等待时间
-        ttk.Label(settings_frame, text="执行滚动到底部鼠标手势后等待时间(毫秒):").grid(row=base_row+3, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(settings_frame, from_=100, to=3000, textvariable=self.scroll_gesture_wait_time, 
-                   width=10).grid(row=base_row+3, column=1, padx=(10, 0), pady=2)
-        
+        ttk.Label(settings_frame, text="执行滚动到底部鼠标手势后等待时间(毫秒):").grid(row=base_row+4, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=100, to=3000, textvariable=self.scroll_gesture_wait_time,
+                   width=10).grid(row=base_row+4, column=1, padx=(10, 0), pady=2)
+
         # 其他选项设置
-        ttk.Checkbutton(settings_frame, text="跳过已翻译的字段", 
-                       variable=self.skip_translated).grid(row=base_row+4, column=0, sticky=tk.W, pady=2)
-        
-        ttk.Label(settings_frame, text="翻译结果等待时间(毫秒):").grid(row=base_row+5, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(settings_frame, from_=100, to=5000, textvariable=self.translation_wait_time, 
-                   width=10).grid(row=base_row+5, column=1, padx=(10, 0), pady=2)
-        
+        ttk.Checkbutton(settings_frame, text="跳过已翻译的字段",
+                       variable=self.skip_translated).grid(row=base_row+5, column=0, sticky=tk.W, pady=2)
+
+        ttk.Label(settings_frame, text="翻译结果等待时间(毫秒):").grid(row=base_row+6, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=100, to=5000, textvariable=self.translation_wait_time,
+                   width=10).grid(row=base_row+6, column=1, padx=(10, 0), pady=2)
+
         # 新增的翻译检测设置项
-        ttk.Checkbutton(settings_frame, text="检测翻译原文与复制的译文是否一致", 
-                       variable=self.check_translation_consistency).grid(row=base_row+6, column=0, columnspan=2, sticky=tk.W, pady=2)
-        
-        ttk.Label(settings_frame, text="检测翻译原文与复制的译文是否一致时间间隔(毫秒):").grid(row=base_row+7, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(settings_frame, from_=100, to=10000, textvariable=self.check_interval, 
-                   width=10).grid(row=base_row+7, column=1, padx=(10, 0), pady=2)
-        
-        ttk.Label(settings_frame, text="检测翻译原文与复制的译文是否一致的超时次数:").grid(row=base_row+8, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(settings_frame, from_=1, to=100, textvariable=self.check_timeout_count, 
+        ttk.Checkbutton(settings_frame, text="检测翻译原文与复制的译文是否一致",
+                       variable=self.check_translation_consistency).grid(row=base_row+7, column=0, columnspan=2, sticky=tk.W, pady=2)
+
+        ttk.Label(settings_frame, text="检测翻译原文与复制的译文是否一致时间间隔(毫秒):").grid(row=base_row+8, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=100, to=10000, textvariable=self.check_interval,
                    width=10).grid(row=base_row+8, column=1, padx=(10, 0), pady=2)
-        
+
+        ttk.Label(settings_frame, text="检测翻译原文与复制的译文是否一致的超时次数:").grid(row=base_row+9, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(settings_frame, from_=1, to=100, textvariable=self.check_timeout_count,
+                   width=10).grid(row=base_row+9, column=1, padx=(10, 0), pady=2)
+
         # 新增：换行转换选项
-        ttk.Checkbutton(settings_frame, text="将换行转换为__NL_114514__无意义字符", 
-                       variable=self.convert_newlines).grid(row=base_row+9, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Checkbutton(settings_frame, text="将换行转换为__NL_114514__无意义字符",
+                       variable=self.convert_newlines).grid(row=base_row+10, column=0, columnspan=2, sticky=tk.W, pady=2)
         
         
         # 控制按钮区域
@@ -477,8 +486,10 @@ class PoeditAutoTranslator:
         """紧急停止功能"""
         if self.is_running:
             self.is_running = False
-            self.root.after(0, self.stop_translation)
+            # 先输出紧急停止日志
             self.root.after(0, lambda: self.log_status(f"*** 紧急停止 - 通过{self.stop_hotkey_combination.get()}快捷键触发 ***"))
+            # 调用停止翻译,但不显示日志(silent=True)
+            self.root.after(0, lambda: self.stop_translation(silent=True))
     
     def trigger_start_translation(self):
         """通过快捷键触发开始翻译"""
@@ -541,11 +552,15 @@ class PoeditAutoTranslator:
             required_keys.append('service_result_box')
         else:  # 复制按钮方式
             required_keys.append('service_copy_button')
-        
+
         # 如果启用了鼠标手势滚动到底部，也需要检查手势位置坐标
         if self.use_scroll_gesture.get():
             required_keys.append('scroll_gesture_position')
-        
+
+        # 如果启用了需要点击翻译按钮，也需要检查翻译按钮位置坐标
+        if self.need_click_translate_button.get():
+            required_keys.append('translate_button_position')
+
         for coord_type in required_keys:
             if self.coordinates.get(coord_type) is None:
                 messagebox.showerror("错误", f"请先设置{coord_type}的坐标")
@@ -565,14 +580,20 @@ class PoeditAutoTranslator:
         self.translation_thread = threading.Thread(target=self.translation_loop, daemon=True)
         self.translation_thread.start()
     
-    def stop_translation(self):
-        """停止翻译"""
+    def stop_translation(self, silent=False):
+        """停止翻译
+
+        Args:
+            silent: 是否静默停止(不显示日志),默认False
+        """
         self.is_running = False
         self.start_button.config(state='normal')
         self.stop_button.config(state='disabled')
-        
-        self.log_status("已停止翻译")
-        
+
+        # 只有在非静默模式下才显示日志
+        if not silent:
+            self.log_status("已停止翻译")
+
         # 清理资源
         gc.collect()
     
@@ -712,7 +733,7 @@ class PoeditAutoTranslator:
                 text = text.replace('\r\n', '\n').replace('\r', '\n')
                 text = text.replace('\n', '__NL_114514__')
                 self.log_status(f"已将换行转换为特殊字符")
-            
+
             pyperclip.copy(text)
             x, y = self.coordinates['service_source']
             pyautogui.click(x, y)
@@ -725,14 +746,39 @@ class PoeditAutoTranslator:
             # 粘贴新内容
             pyautogui.hotkey('ctrl', 'v')
             time.sleep(0.05)
-            
+
+            # 如果启用了需要点击翻译按钮，点击翻译按钮
+            if self.need_click_translate_button.get():
+                self.click_translate_button()
+
             # 如果启用了鼠标手势滚动到底部，执行滚动手势
             if self.use_scroll_gesture.get():
                 self.perform_scroll_to_bottom_gesture()
-                
+
         except Exception as e:
             self.log_status(f"粘贴到翻译服务失败: {str(e)}")
-    
+
+    def click_translate_button(self):
+        """点击翻译按钮"""
+        try:
+            if self.coordinates['translate_button_position'] is None:
+                self.log_status("翻译按钮位置未设置，跳过点击翻译按钮")
+                return
+
+            # 在点击前等待0.05秒
+            time.sleep(0.05)
+
+            x, y = self.coordinates['translate_button_position']
+
+            # 移动到翻译按钮位置并点击
+            pyautogui.click(x, y)
+
+            # 显示日志
+            self.log_status("点击翻译按钮...")
+
+        except Exception as e:
+            self.log_status(f"点击翻译按钮失败: {str(e)}")
+
     def perform_scroll_to_bottom_gesture(self):
         """执行鼠标手势滚动到底部"""
         try:
@@ -1021,7 +1067,8 @@ class PoeditAutoTranslator:
             'copy_method': self.copy_method.get(),
             'use_scroll_gesture': self.use_scroll_gesture.get(),
             'scroll_gesture_wait_time': self.scroll_gesture_wait_time.get(),
-            'convert_newlines': self.convert_newlines.get()
+            'convert_newlines': self.convert_newlines.get(),
+            'need_click_translate_button': self.need_click_translate_button.get()
         }
         
         try:
@@ -1080,7 +1127,11 @@ class PoeditAutoTranslator:
                 # 加载换行转换设置
                 if 'convert_newlines' in config:
                     self.convert_newlines.set(config['convert_newlines'])
-                
+
+                # 加载点击翻译按钮设置
+                if 'need_click_translate_button' in config:
+                    self.need_click_translate_button.set(config['need_click_translate_button'])
+
                 # 更新UI显示
                 for key, coord in self.coordinates.items():
                     if coord:
